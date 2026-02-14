@@ -98,7 +98,6 @@ async function main() {
       //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
       if (tool_name === "read_file") {
         const result = readFile(file_path);
-        console.log(result);
         const toolResponseMessage = createToolResponse(tool_id, result);
         messageHistory.push(toolResponseMessage);
       }

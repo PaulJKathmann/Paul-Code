@@ -1,5 +1,26 @@
 import OpenAI from "openai";
 
+const tools = [
+    {
+        "type": "function",
+        "function": {
+          "name": "read",
+          "description": "Read a file from the system",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "type": "string",
+                "description": "The path to the file to read"
+              }
+            },
+            "required": ["file_path"]
+          }, 
+          "strict": true
+        }
+      }
+    ]
+
 async function main() {
   const [, , flag, prompt] = process.argv;
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -18,27 +39,11 @@ async function main() {
     baseURL: baseURL,
   });
 
+
   const response = await client.chat.completions.create({
     model: "anthropic/claude-haiku-4.5",
     messages: [{ role: "user", content: prompt }],
-    tools: [
-      {
-        "type": "function",
-        "name": "read",
-        "description": "Read a file from the system",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "file_path": {
-              "type": "string",
-              "description": "The path to the file to read"
-            }
-          },
-          "required": ["file_path"]
-        }, 
-        "strict": true
-      }
-    ]
+    tools: tools
   });
 
   if (!response.choices || response.choices.length === 0) {

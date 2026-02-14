@@ -88,6 +88,7 @@ async function main() {
     const toolCalls: any[] = message.tool_calls ?? []
     if (toolCalls.length === 0) {
         console.log(message.content);
+        return;
     }
     for (const toolCall of toolCalls) {
       const tool_id = toolCall.id

@@ -76,7 +76,7 @@ async function main() {
     console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nFile path: ${tool_args.file_path}`);
     //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
     if (tool_name === "read_file") {
-      const result = readFile(tool_args.file_path);
+      const result = readFile(tool_args["file_path"]);
       console.log(`${result}`);
     }
   }

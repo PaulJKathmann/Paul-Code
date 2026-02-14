@@ -1,25 +1,24 @@
 import OpenAI from "openai";
 
 const tools = [
-    {
-        "type": "function",
-        "function": {
-          "name": "read",
-          "description": "Read a file from the system",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "file_path": {
-                "type": "string",
-                "description": "The path to the file to read"
-              }
+      {
+        type: "function",
+        function: {
+          name: "ReadFile",
+          description: "Read and return the contents of a file",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: {
+                type: "string",
+                description: "The path to the file to read",
+              },
             },
-            "required": ["file_path"]
-          }, 
-          "strict": true
-        }
+            required: ["file_path"],
+          },
+        },
       }
-    ]
+  ];
 
 async function main() {
   const [, , flag, prompt] = process.argv;

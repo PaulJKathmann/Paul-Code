@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import fs from "fs";
-import type { ChatCompletionMessage } from "openai/resources/chat/completions/completions.js";
+import type { ChatCompletionMessage, ChatCompletionToolMessageParam } from "openai/resources/chat/completions/completions.js";
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions/completions.mjs';
+
+type MessageHistoryItem = ChatCompletionMessageParam;
+const messageHistory: MessageHistoryItem[] = [];
 
 
 const tools = [
@@ -32,6 +36,19 @@ function readFile(file_path: string): string {
   }
 }
 
+
+function createToolResponse(toolCallId: string, result: string) : ChatCompletionToolMessageParam {
+  return {
+    role: "tool",
+    tool_call_id: toolCallId,
+    content: result,
+  };
+}
+
+
+
+
+
 async function main() {
   const [, , flag, prompt] = process.argv;
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -50,38 +67,42 @@ async function main() {
     baseURL: baseURL,
   });
 
+  messageHistory.push({ role: "user", content: prompt });
+  while (true) {
+    const response = await client.chat.completions.create({
+      model: "anthropic/claude-haiku-4.5",
+      tools,
+      messages: messageHistory,
+    });
 
-  const response = await client.chat.completions.create({
-    model: "anthropic/claude-haiku-4.5",
-    tools,
-    messages: [{ role: "user", content: prompt }],
-   
-  });
+    if (!response.choices || response.choices.length === 0) {
+      throw new Error("no choices in response");
+    }
 
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("no choices in response");
-  }
+    // You can use print statements as follows for debugging, they'll be visible when running tests.
+    console.error("Logs from your program will appear here!");
 
-  // You can use print statements as follows for debugging, they'll be visible when running tests.
-  console.error("Logs from your program will appear here!");
+    const message: ChatCompletionMessage = response.choices[0].message
+    messageHistory.push(message);
 
-  const message: ChatCompletionMessage = response.choices[0].message
-  const toolCalls: any[] = message.tool_calls ?? []
-  if (toolCalls.length === 0) {
-      console.log(response.choices[0].message.content);
-  }
-  for (const toolCall of toolCalls) {
-    const tool_id = toolCall.id
-    const tool_name = toolCall.function.name
-    const tool_args = JSON.parse(toolCall.function.arguments)
-    const file_path = tool_args.file_path;
-    //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
-    if (tool_name === "read_file") {
-      const result = readFile(file_path);
-      console.log(result);
+    const toolCalls: any[] = message.tool_calls ?? []
+    if (toolCalls.length === 0) {
+        console.log(message.content);
+    }
+    for (const toolCall of toolCalls) {
+      const tool_id = toolCall.id
+      const tool_name = toolCall.function.name
+      const tool_args = JSON.parse(toolCall.function.arguments)
+      const file_path = tool_args.file_path;
+      //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
+      if (tool_name === "read_file") {
+        const result = readFile(file_path);
+        console.log(result);
+        const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+      }
     }
   }
-
 }
 
 main();

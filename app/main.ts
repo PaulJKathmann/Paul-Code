@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import fs, { write } from "fs";
 import type { ChatCompletionMessage, ChatCompletionToolMessageParam } from "openai/resources/chat/completions/completions.js";
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions/completions.mjs';
+import { exec, execSync } from "child_process";
 
 type MessageHistoryItem = ChatCompletionMessageParam;
 const messageHistory: MessageHistoryItem[] = [];
@@ -45,6 +46,23 @@ const tools = [
           }
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "Bash",
+        "description": "Execute a shell command",
+        "parameters": {
+          "type": "object",
+          "required": ["command"],
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "The command to execute"
+            }
+          }
+        }
+      }
     }
   ];
 
@@ -67,6 +85,13 @@ function writeToFile(file_path: string, content: string): boolean {
   }
 }
 
+function runBash(command: string): string {
+  try {
+    return execSync(command).toString();
+  } catch (err) {
+    return `Error executing command: ${err}`;
+  }
+}
 
 function createToolResponse(toolCallId: string, result: string) : ChatCompletionToolMessageParam {
   return {
@@ -135,6 +160,16 @@ async function main() {
         const success = writeToFile(file_path, content);
         const toolResponseMessage = createToolResponse(tool_id, success ? "File written successfully" : "Error writing file");
         messageHistory.push(toolResponseMessage);
+      }
+      else if (tool_name === "Bash") {
+        const command = tool_args.command;
+        const result = runBash(command);
+        const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+      }
+      else {
+        console.log(`Unknown tool called: ${tool_name}`);
+        return;
       }
     }
   }

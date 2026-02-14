@@ -73,10 +73,17 @@ async function main() {
     const tool_id = toolCall.id
     const tool_name = toolCall.function.name
     const tool_args = JSON.parse(toolCall.function.arguments)
-    console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nFile path: ${tool_args.file_path}`);
+    const file_path = tool_args.file_path;
+    const file_path2 = tool_args["file_path"];
+    
+    console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nFile path: ${file_path}`);
+    console.log("-----------------------------------");
+    console.log(tool_args["file_path"]);
+    console.log("-----------------------------------");
+    console.log(file_path2);
     //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
     if (tool_name === "read_file") {
-      const result = readFile(tool_args["file_path"]);
+      const result = readFile({ file_path });
       console.log(`${result}`);
     }
   }

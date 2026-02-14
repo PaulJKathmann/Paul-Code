@@ -24,7 +24,6 @@ async function main() {
     tools: [
       {
         "type": "function",
-        "function": {
           "name": "read",
           "description": "Read a file from the system",
           "parameters": {
@@ -37,7 +36,6 @@ async function main() {
             },
             "required": ["file_path"]
           }
-        }
       }
     ]
   });

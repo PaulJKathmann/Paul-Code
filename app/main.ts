@@ -73,7 +73,7 @@ async function main() {
     const tool_id = toolCall.id
     const tool_name = toolCall.function.name
     const tool_args = toolCall.function.arguments
-    console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
+    //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
     if (tool_name === "read_file") {
       const result = readFile(tool_args);
       console.log(`Tool result: ${result}`);

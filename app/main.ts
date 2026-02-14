@@ -24,18 +24,19 @@ async function main() {
     tools: [
       {
         "type": "function",
-          "name": "read",
-          "description": "Read a file from the system",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "file_path": {
-                "type": "string",
-                "description": "The path to the file to read"
-              }
-            },
-            "required": ["file_path"]
-          }
+        "name": "read",
+        "description": "Read a file from the system",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "The path to the file to read"
+            }
+          },
+          "required": ["file_path"]
+        }, 
+        "strict": true
       }
     ]
   });
@@ -47,7 +48,6 @@ async function main() {
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here!");
 
-  // TODO: Uncomment the lines below to pass the first stage
   console.log(response.choices[0].message.content);
 }
 

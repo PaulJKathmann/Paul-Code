@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import fs from "fs";
+import fs, { write } from "fs";
 import type { ChatCompletionMessage, ChatCompletionToolMessageParam } from "openai/resources/chat/completions/completions.js";
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions/completions.mjs';
 
@@ -24,7 +24,28 @@ const tools = [
             required: ["file_path"],
           },
         },
+      },
+      {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "Write content to a file",
+        "parameters": {
+          "type": "object",
+          "required": ["file_path", "content"],
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "The path of the file to write to"
+            },
+            "content": {
+              "type": "string",
+              "description": "The content to write to the file"
+            }
+          }
+        }
       }
+    }
   ];
 
 function readFile(file_path: string): string {
@@ -36,6 +57,16 @@ function readFile(file_path: string): string {
   }
 }
 
+function writeToFile(file_path: string, content: string): boolean {
+  try {
+    fs.writeFileSync(file_path, content, "utf8");
+    return true;
+  } catch (err) {
+    console.error(`Error writing file: ${err}`);
+    return false;
+  }
+}
+
 
 function createToolResponse(toolCallId: string, result: string) : ChatCompletionToolMessageParam {
   return {
@@ -44,8 +75,6 @@ function createToolResponse(toolCallId: string, result: string) : ChatCompletion
     content: result,
   };
 }
-
-
 
 
 
@@ -99,6 +128,12 @@ async function main() {
       if (tool_name === "read_file") {
         const result = readFile(file_path);
         const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+      }
+      else if (tool_name === "write_file") {
+        const content = tool_args.content;
+        const success = writeToFile(file_path, content);
+        const toolResponseMessage = createToolResponse(tool_id, success ? "File written successfully" : "Error writing file");
         messageHistory.push(toolResponseMessage);
       }
     }

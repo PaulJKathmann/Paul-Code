@@ -65,10 +65,11 @@ async function main() {
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here!");
 
-  //console.log(response.choices[0].message.content);
-
   const message: ChatCompletionMessage = response.choices[0].message
   const toolCalls: any[] = message.tool_calls ?? []
+  if (toolCalls.length === 0) {
+      console.log(response.choices[0].message.content);
+  }
   for (const toolCall of toolCalls) {
     const tool_id = toolCall.id
     const tool_name = toolCall.function.name

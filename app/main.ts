@@ -72,10 +72,10 @@ async function main() {
   for (const toolCall of toolCalls) {
     const tool_id = toolCall.id
     const tool_name = toolCall.function.name
-    const tool_args = toolCall.function.arguments
+    const tool_args = JSON.parse(toolCall.function.arguments)
     //console.log(`Tool called - \nID: ${tool_id} \nName: ${tool_name} \nArguments: ${JSON.stringify(tool_args)}`);
     if (tool_name === "read_file") {
-      const result = readFile(tool_args);
+      const result = readFile(tool_args.file_path);
       console.log(`${result}`);
     }
   }

@@ -105,12 +105,11 @@ function createToolResponse(toolCallId: string, result: string) : ChatCompletion
 
 async function main() {
   const [, , flag, prompt] = process.argv;
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const baseURL =
-    process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  const apiKey = process.env.OPENAI_API_KEY;
+  const baseURL = process.env.OPENAI_BASE_URL || process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set");
+    throw new Error("API_KEY is not set");
   }
   if (flag !== "-p" || !prompt) {
     throw new Error("error: -p flag is required");
@@ -124,7 +123,7 @@ async function main() {
   messageHistory.push({ role: "user", content: prompt });
   while (true) {
     const response = await client.chat.completions.create({
-      model: "anthropic/claude-haiku-4.5",
+      model: "gpt-5.2-2025-12-11",
       tools,
       messages: messageHistory,
     });

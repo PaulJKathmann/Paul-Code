@@ -6,10 +6,12 @@
     "dev": "bun run app/main.ts"
   },
   "dependencies": {
+    "glob": "^13.0.3",
     "openai": "^6.22.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/node": "^25.2.3"
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3"
   }
 }

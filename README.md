@@ -6,6 +6,18 @@ Paul Code is a coding agent I built to better understand the underlying mechanic
 
 Paul Code is designed to help with day-to-day software engineering tasks from a terminal-style workflow. Depending on how it’s wired up in your environment, it can:
 
+### Tools
+
+Paul Code currently exposes these tools to the model:
+
+- `read_file` — read file contents
+- `write_file` — create/overwrite files
+- `edit_file` — surgical exact-string replacement in a file (old_string must match exactly once)
+- `grep_search` — search file contents for a pattern (regex supported; returns file/line matches)
+- `glob_find` — find files by glob pattern (e.g. `**/*.ts`)
+- `list_directory` — list directory contents (directories have trailing `/`)
+- `bash` — run shell commands (supports `timeout` + `cwd`, captures stderr, truncates large output)
+
 - **Explore and explain codebases**
   - Read files, summarize structure, and answer questions about how things work
   - Trace logic across modules and point out relevant call sites

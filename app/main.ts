@@ -3,7 +3,7 @@ import type { ChatCompletionMessage, ChatCompletionToolMessageParam } from "open
 import type { ChatCompletionMessageParam, ChatCompletionMessageToolCall } from 'openai/resources/chat/completions/completions.mjs';
 import { runAgentLoop, runInteractiveMode } from "./agent.ts";
 type MessageHistoryItem = ChatCompletionMessageParam;
-const messageHistory: MessageHistoryItem[] = [];
+
 
 
 async function main() {
@@ -12,6 +12,7 @@ async function main() {
   const prompt = promptFlagIndex !== -1 ? args[promptFlagIndex + 1] : args[0];
   const apiKey = process.env.OPENAI_API_KEY;
   const baseURL = process.env.OPENAI_BASE_URL || process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+  const messageHistory: MessageHistoryItem[] = [];
 
   if (!apiKey) {
     throw new Error("API_KEY is not set");

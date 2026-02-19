@@ -1,87 +1,149 @@
-import fs, { readFileSync, write, writeFileSync } from "fs";
-import type { ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam, ChatCompletionMessageToolCall, ChatCompletionTool, ChatCompletionToolMessageParam } from "openai/resources/chat/completions/completions.js";
+import fs, { readFileSync, writeFileSync, readdirSync } from "fs";
+import type {
+  ChatCompletionMessageFunctionToolCall,
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+  ChatCompletionToolMessageParam,
+} from "openai/resources/chat/completions/completions.js";
 import { execSync } from "child_process";
+import { globSync } from "glob";
 
 export const tool_definitions: ChatCompletionTool[] = [
-      {
-        type: "function",
-        function: {
-          name: "read_file",
-          description: "Read and return the contents of a file",
-          parameters: {
-            type: "object",
-            properties: {
-              file_path: {
-                type: "string",
-                description: "The path to the file to read",
-              },
-            },
-            required: ["file_path"],
+  {
+    type: "function",
+    function: {
+      name: "read_file",
+      description: "Read and return the contents of a file",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path to the file to read",
+          },
+        },
+        required: ["file_path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_file",
+      description: "Write content to a file",
+      parameters: {
+        type: "object",
+        required: ["file_path", "content"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path of the file to write to",
+          },
+          content: {
+            type: "string",
+            description: "The content to write to the file",
           },
         },
       },
-      {
-      "type": "function",
-      "function": {
-        "name": "write_file",
-        "description": "Write content to a file",
-        "parameters": {
-          "type": "object",
-          "required": ["file_path", "content"],
-          "properties": {
-            "file_path": {
-              "type": "string",
-              "description": "The path of the file to write to"
-            },
-            "content": {
-              "type": "string",
-              "description": "The content to write to the file"
-            }
-          }
-        }
-      }
     },
-    {
-        "type": "function",
-        "function": {
-        "name": "Bash",
-        "description": "Execute a shell command",
-        "parameters": {
-          "type": "object",
-          "required": ["command"],
-          "properties": {
-            "command": {
-              "type": "string",
-              "description": "The command to execute"
-            }
-          }
-        }
-      }
+  },
+  {
+    type: "function",
+    function: {
+      name: "bash",
+      description:
+        "Execute a shell command. Commands killed after timeout. Output truncated if large.",
+      parameters: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: {
+            type: "string",
+            description: "The command to execute",
+          },
+          timeout: {
+            type: "number",
+            description: "Timeout in ms. Default 30000. Max 300000.",
+          },
+          cwd: {
+            type: "string",
+            description: "Working directory. Defaults to project root.",
+          },
+        },
+      },
     },
-    {
-        type: "function",
-        function: {
-            name: "edit_file",
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_file",
+      description:
+        "Make a targeted edit by replacing an exact string match with new content. " +
+        "The old_string must appear exactly once in the file. " +
+        "To insert: use surrounding context as old_string, include it in new_string with the addition. " +
+        "To delete: include content to remove in old_string, set new_string to surroundings without it.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: { type: "string", description: "Path to the file to edit" },
+          old_string: {
+            type: "string",
             description:
-                "Make a targeted edit by replacing an exact string match with new content. " +
-                "The old_string must appear exactly once in the file. " +
-                "To insert: use surrounding context as old_string, include it in new_string with the addition. " +
-                "To delete: include content to remove in old_string, set new_string to surroundings without it.",
-            parameters: {
-                type: "object",
-                properties: {
-                file_path: { type: "string", description: "Path to the file to edit" },
-                old_string: {
-                    type: "string",
-                    description: "Exact string to find. Must match exactly once. Include enough context to be unique.",
-                },
-                new_string: { type: "string", description: "Replacement string" },
-                },
-                required: ["file_path", "old_string", "new_string"],
-            },
-        }
-    }
-  ];
+              "Exact string to find. Must match exactly once. Include enough context to be unique.",
+          },
+          new_string: { type: "string", description: "Replacement string" },
+        },
+        required: ["file_path", "old_string", "new_string"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "grep_search",
+      description:
+        "Search file contents for a pattern. Returns matching lines with file paths and line numbers. " +
+        "Uses ripgrep under the hood. Supports regex. Truncated after 100 matches.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Search pattern (regex supported)" },
+          path: { type: "string", description: "Directory to search. Defaults to cwd." },
+          include: { type: "string", description: 'File glob filter, e.g. "*.ts"' },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "glob_find",
+      description: "Find files matching a glob pattern. Truncated after 200 matches.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: 'Glob pattern, e.g. "**/*.ts", "*.json"' },
+          path: { type: "string", description: "Base directory. Defaults to cwd." },
+        },
+        required: ["pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_directory",
+      description: "List directory contents with type indicators (file vs directory).",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Directory path. Defaults to cwd." },
+        },
+      },
+    },
+  },
+];
 
 
 export function readFile(file_path: string): string {
@@ -103,12 +165,149 @@ export function writeToFile(file_path: string, content: string): boolean {
   }
 }
 
-export function runBash(command: string): string {
+const DEFAULT_TIMEOUT = 30_000; // 30s
+const MAX_TIMEOUT = 300_000; // 5m
+const MAX_OUTPUT_CHARS = 30_000;
+
+function truncateCommandOutput(output: string): string {
+  if (output.length <= MAX_OUTPUT_CHARS) return output;
+
+  const headSize = Math.floor(MAX_OUTPUT_CHARS * 0.8);
+  const tailSize = Math.floor(MAX_OUTPUT_CHARS * 0.2);
+
+  return (
+    output.slice(0, headSize) +
+    `\n\n[... truncated: showing first ${headSize} and last ${tailSize} chars of ${output.length} total ...]\n\n` +
+    output.slice(-tailSize)
+  );
+}
+
+export function runBash(command: string, timeoutMs?: number, cwd?: string): string {
+  const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
+
   try {
-    return execSync(command).toString();
-  } catch (err) {
-    return `Error executing command: ${err}`;
+    const stdout = execSync(command, {
+      encoding: "utf-8",
+      timeout,
+      cwd,
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return truncateCommandOutput(stdout);
+  } catch (err: any) {
+    // Node may signal timeouts via err.killed OR err.code === 'ETIMEDOUT'
+    if (err?.killed || err?.code === "ETIMEDOUT") {
+      let msg = `Error: command timed out after ${timeout / 1000}s and was killed.`;
+      if (err.stdout) msg += `\nStdout:\n${truncateCommandOutput(String(err.stdout))}`;
+      if (err.stderr) msg += `\nStderr:\n${truncateCommandOutput(String(err.stderr))}`;
+      return msg;
+    }
+
+    let output = "";
+    if (err?.stdout) output += String(err.stdout);
+    if (err?.stderr) output += (output ? "\nSTDERR:\n" : "") + String(err.stderr);
+    if (!output) output = `Command failed with exit code ${err?.status ?? "unknown"}`;
+    return truncateCommandOutput(output);
   }
+}
+
+function shEscapeSingleQuotes(input: string): string {
+  // for wrapping in single quotes in shell
+  return input.replace(/'/g, "'\\''");
+}
+
+export function grepSearch(pattern: string, path: string = ".", include?: string): string {
+  const safePattern = shEscapeSingleQuotes(pattern);
+  const safePath = shEscapeSingleQuotes(path);
+
+  // Prefer rg, fall back to grep
+  const hasRg = (() => {
+    try {
+      execSync("command -v rg", { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (hasRg) {
+    let cmd = `rg -n --heading -C 0 --max-count 200`;
+    if (include) cmd += ` --glob '${shEscapeSingleQuotes(include)}'`;
+    cmd += ` -- '${safePattern}' '${safePath}'`;
+
+    try {
+      const output = execSync(cmd, {
+        encoding: "utf-8",
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return truncateLines(output, 100);
+    } catch (err: any) {
+      if (err?.status === 1) return "No matches found.";
+      return `Error: ${err?.stderr || err?.message || err}`;
+    }
+  }
+
+  // grep fallback
+  let grepCmd = `grep -RIn -- '${safePattern}' '${safePath}'`;
+  if (include) {
+    // Best-effort include using find + grep if include specified
+    const safeInclude = shEscapeSingleQuotes(include);
+    grepCmd = `find '${safePath}' -type f -name '${safeInclude}' -print0 | xargs -0 grep -n -- '${safePattern}'`;
+  }
+
+  try {
+    const output = execSync(grepCmd, {
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return truncateLines(output, 100);
+  } catch (err: any) {
+    if (err?.status === 1) return "No matches found.";
+    return `Error: ${err?.stderr || err?.message || err}`;
+  }
+}
+
+function truncateLines(output: string, maxLines: number): string {
+  const lines = output.split("\n");
+  if (lines.length <= maxLines) return output;
+  return (
+    lines.slice(0, maxLines).join("\n") +
+    `\n\n[... showing ${maxLines} of ${lines.length} lines]`
+  );
+}
+
+export function globFind(pattern: string, path: string = "."): string {
+  const matches = globSync(pattern, {
+    cwd: path,
+    ignore: ["**/node_modules/**", "**/.git/**"],
+  }).sort();
+
+  if (matches.length === 0) return "No files found.";
+
+  const truncated = matches.slice(0, 200);
+  let result = truncated.join("\n");
+  if (matches.length > 200) result += `\n\n[... showing 200 of ${matches.length} matches]`;
+  return result;
+}
+
+export function listDirectory(path: string = "."): string {
+  const entries = readdirSync(path, { withFileTypes: true });
+  const dirs: string[] = [];
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (entry.isDirectory()) dirs.push(`${entry.name}/`);
+    else files.push(entry.name);
+  }
+
+  dirs.sort();
+  files.sort();
+  return [...dirs, ...files].join("\n") || "Directory is empty.";
 }
 
 export function editFile(file_path: string, old_string: string, new_string: string): string {
@@ -169,9 +368,32 @@ export function handleToolCall(toolCall: ChatCompletionMessageFunctionToolCall, 
         const toolResponseMessage = createToolResponse(tool_id, success ? "File written successfully" : "Error writing file");
         messageHistory.push(toolResponseMessage);
     }
-    else if (tool_name === "Bash") {
+    else if (tool_name === "bash") {
         const command = tool_args.command;
-        const result = runBash(command);
+        const timeout = tool_args.timeout;
+        const cwd = tool_args.cwd;
+        const result = runBash(command, timeout, cwd);
+        const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+    }
+    else if (tool_name === "grep_search") {
+        const pattern = tool_args.pattern;
+        const path = tool_args.path ?? ".";
+        const include = tool_args.include;
+        const result = grepSearch(pattern, path, include);
+        const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+    }
+    else if (tool_name === "glob_find") {
+        const pattern = tool_args.pattern;
+        const path = tool_args.path ?? ".";
+        const result = globFind(pattern, path);
+        const toolResponseMessage = createToolResponse(tool_id, result);
+        messageHistory.push(toolResponseMessage);
+    }
+    else if (tool_name === "list_directory") {
+        const path = tool_args.path ?? ".";
+        const result = listDirectory(path);
         const toolResponseMessage = createToolResponse(tool_id, result);
         messageHistory.push(toolResponseMessage);
     }

@@ -1,14 +1,21 @@
 import type OpenAI from "openai";
-import * as tools from "./tools.js";
-import { SYSTEM_PROMPT } from "./prompts.js";
-import type { ChatCompletionMessage, ChatCompletionMessageParam } from "openai/resources/chat/completions/completions.js";
-import type {  ChatCompletionMessageToolCall } from 'openai/resources/chat/completions/completions.mjs';
-import * as readline from 'readline/promises';
-import type { Tool } from "openai/resources/responses/responses.mjs";
-import type { ToolCall } from "openai/resources/beta/threads/runs.mjs";
-import { error } from "console";
+import type { ChatCompletionMessage, ChatCompletionMessageParam, ChatCompletionMessageToolCall } from "openai/resources/chat/completions/completions.js";
+import * as readline from "readline/promises";
+import * as tools from "./tools.ts";
+import { SYSTEM_PROMPT } from "./prompts.ts";
 
-export async function runAgentLoop(client: OpenAI, messageHistory: ChatCompletionMessageParam[], maxIterations: number = 50): Promise<string> {
+export interface AgentLoopOptions {
+  maxIterations?: number;
+  systemPrompt?: string;
+}
+
+export async function runAgentLoop(client: OpenAI, messageHistory: ChatCompletionMessageParam[], optionsOrMaxIterations?: number | AgentLoopOptions): Promise<string> {
+    const opts: AgentLoopOptions = typeof optionsOrMaxIterations === "number"
+      ? { maxIterations: optionsOrMaxIterations }
+      : optionsOrMaxIterations ?? {};
+    const maxIterations = opts.maxIterations ?? 50;
+    const systemPrompt = opts.systemPrompt ?? SYSTEM_PROMPT;
+
     let iterations = 0;
     const warningThreshold = Math.floor(maxIterations * 0.80);
     while (true) {
@@ -22,7 +29,7 @@ export async function runAgentLoop(client: OpenAI, messageHistory: ChatCompletio
                 `Wrap up your current task. Do not start new tool calls unless absolutely necessary.`,
             });
         }
-        const message: ChatCompletionMessage = await processStreamWithRetries(client, messageHistory);
+        const message: ChatCompletionMessage = await processStreamWithRetries(client, messageHistory, 3, systemPrompt);
         messageHistory.push(message);
 
         const toolCalls: ChatCompletionMessageToolCall[] = message.tool_calls ?? [];
@@ -30,7 +37,7 @@ export async function runAgentLoop(client: OpenAI, messageHistory: ChatCompletio
             return message.content ?? "";
         }
         for (const toolCall of toolCalls) {
-            if ("function" in toolCall) tools.handleToolCall(toolCall, messageHistory);
+            if ("function" in toolCall) await tools.handleToolCall(toolCall, messageHistory);
             else console.error(`tool call type ChatCompletionMessageCustomToolCall not supported: ${JSON.stringify(toolCall)}`);
         }
     }
@@ -42,12 +49,12 @@ interface ToolCallAccumulator {
         name: string;
         arguments: string;
     };
-};
+}
 
-async function processStreamWithRetries(client: OpenAI, messageHistory: ChatCompletionMessageParam[], maxRetries: number = 3) : Promise<ChatCompletionMessage> {
+async function processStreamWithRetries(client: OpenAI, messageHistory: ChatCompletionMessageParam[], maxRetries: number = 3, systemPrompt: string = SYSTEM_PROMPT) : Promise<ChatCompletionMessage> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            return await processStream(client, messageHistory);
+            return await processStream(client, messageHistory, systemPrompt);
         }
         catch (err) {
             if (attempt === maxRetries) {
@@ -63,16 +70,17 @@ async function processStreamWithRetries(client: OpenAI, messageHistory: ChatComp
     }   
     throw new Error("Unable to process stream after multiple retries.");
 }
+
 const MODEL_NAME = "gpt-5.2";
 
-async function processStream(client: OpenAI, messageHistory: ChatCompletionMessageParam[]) : Promise<ChatCompletionMessage> {
+async function processStream(client: OpenAI, messageHistory: ChatCompletionMessageParam[], systemPrompt: string = SYSTEM_PROMPT) : Promise<ChatCompletionMessage> {
     const responseStream = await client.chat.completions.create({
         model: MODEL_NAME,
         tools: tools.tool_definitions,
         messages: [
             {
             role: "system",
-            content: SYSTEM_PROMPT,
+            content: systemPrompt,
             },
             ...messageHistory,
         ],
@@ -82,7 +90,6 @@ async function processStream(client: OpenAI, messageHistory: ChatCompletionMessa
     const contentParts: string[] = [];
     const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
     const refusals: string[] = [];
-    let finishReason: string | undefined = undefined;
     for await (const chunk of responseStream) {
         const choice = chunk.choices[0]
         if (!choice) continue;
@@ -112,9 +119,6 @@ async function processStream(client: OpenAI, messageHistory: ChatCompletionMessa
             }
         }
 
-        if (choice.finish_reason) {
-            finishReason = choice.finish_reason;
-        }
     }
     if (contentParts.length > 0) process.stdout.write("\n");
     const fullContent = contentParts.join("") || null;
@@ -133,8 +137,6 @@ async function processStream(client: OpenAI, messageHistory: ChatCompletionMessa
         refusal: refusals.join("") || null
     };
 }
-
-
 
 export async function runInteractiveMode(
   client: OpenAI,
@@ -155,8 +157,6 @@ export async function runInteractiveMode(
     `  /history     Show how many messages are in context\n` +
     `  /clear       Clear conversation history (keeps system prompt)\n` +
     `  /model       Show current model\n`;
-
-  const modelName = "gpt-5.2";
 
   const printDivider = () => {
     const width = Math.max(32, Math.min(process.stdout.columns ?? 80, 120));
@@ -198,7 +198,7 @@ export async function runInteractiveMode(
       }
 
       if (cmd === "/model") {
-        console.log(`Model: ${modelName}`);
+        console.log(`Model: ${MODEL_NAME}`);
         continue;
       }
 

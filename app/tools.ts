@@ -1,4 +1,4 @@
-import fs, { readFileSync, writeFileSync, readdirSync } from "fs";
+import fs from "fs";
 import type {
   ChatCompletionMessageFunctionToolCall,
   ChatCompletionMessageParam,
@@ -143,8 +143,23 @@ export const tool_definitions: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "web_fetch",
+      description:
+        "Fetch a URL and return its text content. HTML tags are stripped for readability. " +
+        "Output truncated to 30KB. Timeout: 10 seconds.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The URL to fetch" },
+        },
+        required: ["url"],
+      },
+    },
+  },
 ];
-
 
 export function readFile(file_path: string): string {
   try {
@@ -295,7 +310,7 @@ export function globFind(pattern: string, path: string = "."): string {
 }
 
 export function listDirectory(path: string = "."): string {
-  const entries = readdirSync(path, { withFileTypes: true });
+  const entries = fs.readdirSync(path, { withFileTypes: true });
   const dirs: string[] = [];
   const files: string[] = [];
 
@@ -310,10 +325,54 @@ export function listDirectory(path: string = "."): string {
   return [...dirs, ...files].join("\n") || "Directory is empty.";
 }
 
+const WEB_FETCH_TIMEOUT = 10_000; // 10s
+
+function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export async function webFetch(url: string): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "User-Agent": "PaulCode-Agent/1.0" },
+    });
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      return `Error: HTTP ${response.status} ${response.statusText}`;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const text = await response.text();
+
+    const body = contentType.includes("html") ? stripHtmlTags(text) : text;
+    return truncateCommandOutput(body);
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return `Error: request timed out after ${WEB_FETCH_TIMEOUT / 1000}s`;
+    }
+    return `Error fetching URL: ${err?.message ?? err}`;
+  }
+}
+
 export function editFile(file_path: string, old_string: string, new_string: string): string {
     let content: string;
   try {
-    content = readFileSync(file_path, "utf-8");
+    content = fs.readFileSync(file_path, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return `Error: file not found: ${file_path}`;
@@ -337,7 +396,7 @@ export function editFile(file_path: string, old_string: string, new_string: stri
   }
 
   const newContent = content.replace(old_string, new_string);
-  writeFileSync(file_path, newContent, "utf-8");
+  fs.writeFileSync(file_path, newContent, "utf-8");
   return `Successfully edited ${file_path}`;
 }
 
@@ -351,62 +410,42 @@ export function createToolResponse(toolCallId: string, result: string) : ChatCom
 }
 
 
-export function handleToolCall(toolCall: ChatCompletionMessageFunctionToolCall, messageHistory: ChatCompletionMessageParam[]) : void {
-    const tool_id = toolCall.id
-    const tool_name = toolCall.function.name
-    const tool_args = JSON.parse(toolCall.function.arguments)
-    const file_path = tool_args.file_path;
-    console.log(`Tool call - ${tool_name}: ${JSON.stringify(tool_args)}`);
-    if (tool_name === "read_file") {
-        const result = readFile(file_path);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "write_file") {
-        const content = tool_args.content;
-        const success = writeToFile(file_path, content);
-        const toolResponseMessage = createToolResponse(tool_id, success ? "File written successfully" : "Error writing file");
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "bash") {
-        const command = tool_args.command;
-        const timeout = tool_args.timeout;
-        const cwd = tool_args.cwd;
-        const result = runBash(command, timeout, cwd);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "grep_search") {
-        const pattern = tool_args.pattern;
-        const path = tool_args.path ?? ".";
-        const include = tool_args.include;
-        const result = grepSearch(pattern, path, include);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "glob_find") {
-        const pattern = tool_args.pattern;
-        const path = tool_args.path ?? ".";
-        const result = globFind(pattern, path);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "list_directory") {
-        const path = tool_args.path ?? ".";
-        const result = listDirectory(path);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else if (tool_name === "edit_file") {
-        const old_string = tool_args.old_string;
-        const new_string = tool_args.new_string;
-        const result = editFile(file_path, old_string, new_string);
-        const toolResponseMessage = createToolResponse(tool_id, result);
-        messageHistory.push(toolResponseMessage);
-    }
-    else {
-        console.log(`Unknown tool called: ${tool_name}`);
+export async function handleToolCall(toolCall: ChatCompletionMessageFunctionToolCall, messageHistory: ChatCompletionMessageParam[]): Promise<void> {
+    const toolName = toolCall.function.name;
+    const args = JSON.parse(toolCall.function.arguments);
+    console.log(`Tool call - ${toolName}: ${JSON.stringify(args)}`);
+
+    const result = await dispatchToolCall(toolName, args);
+    if (result === undefined) {
+        console.log(`Unknown tool called: ${toolName}`);
         return;
+    }
+
+    messageHistory.push(createToolResponse(toolCall.id, result));
+}
+
+async function dispatchToolCall(toolName: string, args: Record<string, any>): Promise<string | undefined> {
+    switch (toolName) {
+        case "read_file":
+            return readFile(args.file_path);
+        case "write_file":
+            return writeToFile(args.file_path, args.content)
+                ? "File written successfully"
+                : "Error writing file";
+        case "bash":
+            return runBash(args.command, args.timeout, args.cwd);
+        case "grep_search":
+            return grepSearch(args.pattern, args.path ?? ".", args.include);
+        case "glob_find":
+            return globFind(args.pattern, args.path ?? ".");
+        case "list_directory":
+            return listDirectory(args.path ?? ".");
+        case "edit_file":
+            return editFile(args.file_path, args.old_string, args.new_string);
+        case "web_fetch":
+            return await webFetch(args.url);
+        default:
+            return undefined;
     }
 }
 

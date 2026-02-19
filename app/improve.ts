@@ -37,7 +37,7 @@ function appendToLog(entry: string): void {
 }
 
 function gitCommit(message: string): void {
-  execSync(`git add -A && git commit -m "${message.replace(/"/g, '\\"')}"`, GIT_EXEC_OPTS);
+  execSync(`git add -A && git commit --no-gpg-sign -m "${message.replace(/"/g, '\\"')}"`, GIT_EXEC_OPTS);
 }
 
 function gitResetHard(count: number): void {

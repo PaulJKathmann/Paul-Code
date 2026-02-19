@@ -14,6 +14,7 @@ export const IMPROVE_SYSTEM_PROMPT = `You are an AI agent improvement system. Yo
 - Use web_fetch to read reference docs when researching implementation approaches
 - After implementing, read back modified files to verify correctness
 - Run bash commands to verify your changes compile: bun x tsc --noEmit
+- When committing or pushing with git, always use --no-gpg-sign (e.g. git commit --no-gpg-sign, git push)
 
 ## Available Tools
 - read_file: Read file contents

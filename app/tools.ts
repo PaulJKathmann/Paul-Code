@@ -8,6 +8,25 @@ import type {
 import { execSync } from "child_process";
 import { globSync } from "glob";
 
+type JsonObject = Record<string, unknown>;
+
+type JsonParseOk = { ok: true; value: JsonObject };
+type JsonParseErr = { ok: false; error: string };
+type JsonParseResult = JsonParseOk | JsonParseErr;
+
+function safeParseJsonObject(input: string): JsonParseResult {
+  try {
+    const value: unknown = JSON.parse(input);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, error: "Expected a JSON object." };
+    }
+    return { ok: true, value: value as JsonObject };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+}
+
 export const tool_definitions: ChatCompletionTool[] = [
   {
     type: "function",
@@ -410,42 +429,175 @@ export function createToolResponse(toolCallId: string, result: string) : ChatCom
 }
 
 
-export async function handleToolCall(toolCall: ChatCompletionMessageFunctionToolCall, messageHistory: ChatCompletionMessageParam[]): Promise<void> {
-    const toolName = toolCall.function.name;
-    const args = JSON.parse(toolCall.function.arguments);
-    console.log(`Tool call - ${toolName}: ${JSON.stringify(args)}`);
+export async function handleToolCall(
+  toolCall: ChatCompletionMessageFunctionToolCall,
+  messageHistory: ChatCompletionMessageParam[],
+): Promise<void> {
+  const toolName = toolCall.function.name;
 
-    const result = await dispatchToolCall(toolName, args);
-    if (result === undefined) {
-        console.log(`Unknown tool called: ${toolName}`);
-        return;
-    }
+  const parsed = safeParseJsonObject(toolCall.function.arguments);
+  if (!parsed.ok) {
+    const errorMsg = `Error: invalid JSON arguments for tool "${toolName}": ${parsed.error}`;
+    console.log(`Tool call - ${toolName}: <invalid JSON>`);
+    messageHistory.push(createToolResponse(toolCall.id, errorMsg));
+    return;
+  }
 
-    messageHistory.push(createToolResponse(toolCall.id, result));
+  const args = parsed.value;
+  console.log(`Tool call - ${toolName}: ${JSON.stringify(args)}`);
+
+  const dispatched = await dispatchToolCall(toolName, args);
+  if (!dispatched.ok) {
+    console.log(dispatched.error);
+    messageHistory.push(createToolResponse(toolCall.id, dispatched.error));
+    return;
+  }
+
+  messageHistory.push(createToolResponse(toolCall.id, dispatched.result));
 }
 
-async function dispatchToolCall(toolName: string, args: Record<string, any>): Promise<string | undefined> {
-    switch (toolName) {
-        case "read_file":
-            return readFile(args.file_path);
-        case "write_file":
-            return writeToFile(args.file_path, args.content)
-                ? "File written successfully"
-                : "Error writing file";
-        case "bash":
-            return runBash(args.command, args.timeout, args.cwd);
-        case "grep_search":
-            return grepSearch(args.pattern, args.path ?? ".", args.include);
-        case "glob_find":
-            return globFind(args.pattern, args.path ?? ".");
-        case "list_directory":
-            return listDirectory(args.path ?? ".");
-        case "edit_file":
-            return editFile(args.file_path, args.old_string, args.new_string);
-        case "web_fetch":
-            return await webFetch(args.url);
-        default:
-            return undefined;
+type ToolArgs = {
+  read_file: { file_path: string };
+  write_file: { file_path: string; content: string };
+  bash: { command: string; timeout?: number; cwd?: string };
+  edit_file: { file_path: string; old_string: string; new_string: string };
+  grep_search: { pattern: string; path?: string; include?: string };
+  glob_find: { pattern: string; path?: string };
+  list_directory: { path?: string };
+  web_fetch: { url: string };
+};
+
+type ToolName = keyof ToolArgs;
+
+type DispatchOk = { ok: true; result: string };
+type DispatchErr = { ok: false; error: string };
+
+type DispatchResult = DispatchOk | DispatchErr;
+
+function isToolName(value: string): value is ToolName {
+  return (
+    value === "read_file" ||
+    value === "write_file" ||
+    value === "bash" ||
+    value === "edit_file" ||
+    value === "grep_search" ||
+    value === "glob_find" ||
+    value === "list_directory" ||
+    value === "web_fetch"
+  );
+}
+
+function getString(obj: JsonObject, key: string): string | undefined {
+  const v = obj[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+function getNumber(obj: JsonObject, key: string): number | undefined {
+  const v = obj[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+function parseArgs(toolName: ToolName, args: JsonObject): { ok: true; value: ToolArgs[ToolName] } | { ok: false; error: string } {
+  switch (toolName) {
+    case "read_file": {
+      const file_path = getString(args, "file_path");
+      if (!file_path) return { ok: false, error: 'Missing required string argument "file_path".' };
+      return { ok: true, value: { file_path } };
     }
+    case "write_file": {
+      const file_path = getString(args, "file_path");
+      const content = getString(args, "content");
+      if (!file_path) return { ok: false, error: 'Missing required string argument "file_path".' };
+      if (content === undefined) return { ok: false, error: 'Missing required string argument "content".' };
+      return { ok: true, value: { file_path, content } };
+    }
+    case "bash": {
+      const command = getString(args, "command");
+      if (!command) return { ok: false, error: 'Missing required string argument "command".' };
+      const timeout = getNumber(args, "timeout");
+      const cwd = getString(args, "cwd");
+      return { ok: true, value: { command, timeout, cwd } };
+    }
+    case "edit_file": {
+      const file_path = getString(args, "file_path");
+      const old_string = getString(args, "old_string");
+      const new_string = getString(args, "new_string");
+      if (!file_path) return { ok: false, error: 'Missing required string argument "file_path".' };
+      if (old_string === undefined) return { ok: false, error: 'Missing required string argument "old_string".' };
+      if (new_string === undefined) return { ok: false, error: 'Missing required string argument "new_string".' };
+      return { ok: true, value: { file_path, old_string, new_string } };
+    }
+    case "grep_search": {
+      const pattern = getString(args, "pattern");
+      if (!pattern) return { ok: false, error: 'Missing required string argument "pattern".' };
+      const path = getString(args, "path");
+      const include = getString(args, "include");
+      return { ok: true, value: { pattern, path, include } };
+    }
+    case "glob_find": {
+      const pattern = getString(args, "pattern");
+      if (!pattern) return { ok: false, error: 'Missing required string argument "pattern".' };
+      const path = getString(args, "path");
+      return { ok: true, value: { pattern, path } };
+    }
+    case "list_directory": {
+      const path = getString(args, "path");
+      return { ok: true, value: { path } };
+    }
+    case "web_fetch": {
+      const url = getString(args, "url");
+      if (!url) return { ok: false, error: 'Missing required string argument "url".' };
+      return { ok: true, value: { url } };
+    }
+  }
+}
+
+async function dispatchToolCall(toolName: string, args: JsonObject): Promise<DispatchResult> {
+  if (!isToolName(toolName)) {
+    return { ok: false, error: `Error: unknown tool called: ${toolName}` };
+  }
+
+  const parsedArgs = parseArgs(toolName, args);
+  if (!parsedArgs.ok) {
+    return { ok: false, error: `Error: invalid arguments for tool "${toolName}": ${parsedArgs.error}` };
+  }
+
+  const typedArgs = parsedArgs.value as ToolArgs[typeof toolName];
+
+  switch (toolName) {
+    case "read_file":
+      return { ok: true, result: readFile((typedArgs as ToolArgs["read_file"]).file_path) };
+    case "write_file": {
+      const a = typedArgs as ToolArgs["write_file"];
+      return {
+        ok: true,
+        result: writeToFile(a.file_path, a.content) ? "File written successfully" : "Error writing file",
+      };
+    }
+    case "bash": {
+      const a = typedArgs as ToolArgs["bash"];
+      return { ok: true, result: runBash(a.command, a.timeout, a.cwd) };
+    }
+    case "grep_search": {
+      const a = typedArgs as ToolArgs["grep_search"];
+      return { ok: true, result: grepSearch(a.pattern, a.path ?? ".", a.include) };
+    }
+    case "glob_find": {
+      const a = typedArgs as ToolArgs["glob_find"];
+      return { ok: true, result: globFind(a.pattern, a.path ?? ".") };
+    }
+    case "list_directory": {
+      const a = typedArgs as ToolArgs["list_directory"];
+      return { ok: true, result: listDirectory(a.path ?? ".") };
+    }
+    case "edit_file": {
+      const a = typedArgs as ToolArgs["edit_file"];
+      return { ok: true, result: editFile(a.file_path, a.old_string, a.new_string) };
+    }
+    case "web_fetch": {
+      const a = typedArgs as ToolArgs["web_fetch"];
+      return { ok: true, result: await webFetch(a.url) };
+    }
+  }
 }
 

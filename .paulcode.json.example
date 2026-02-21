@@ -1,0 +1,5 @@
+{
+  "model": "gpt-5.2",
+  "maxIterations": 50,
+  "baseURL": "https://api.openai.com/v1"
+}

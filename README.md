@@ -48,3 +48,11 @@ Paul Code currently exposes these tools to the model:
 ## Notes
 
 This is intentionally a learning project, so capabilities may evolve as the agent and tooling change.
+
+
+## Getting started
+
+1. Clone the repository: `git clone https://github.com/paulcodeai/paul-code.git`
+2. Install dependencies: `npm install`
+3. Create a .env and populate with your OpenAI API key: `cp .env.example .env`
+4. create a config file: `cp config.example.json config.json`

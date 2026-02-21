@@ -1,20 +1,39 @@
 import type OpenAI from "openai";
-import { buildSystemPrompt } from "./prompts.js";
 import type { ChatCompletionMessage, ChatCompletionMessageParam } from "openai/resources/chat/completions/completions.js";
-import type {  ChatCompletionMessageToolCall } from 'openai/resources/chat/completions/completions.mjs';
-import * as readline from 'readline/promises';
-import type { Tool } from "openai/resources/responses/responses.mjs";
-import type { ToolCall } from "openai/resources/beta/threads/runs.mjs";
-import { error } from "console";
+import type { ChatCompletionMessageToolCall } from "openai/resources/chat/completions/completions.mjs";
+import * as readline from "readline/promises";
+import {
+  countToolSchemaTokens,
+  formatCompactionResult,
+  formatContextUsage,
+  getContextUsage,
+  needsCompaction,
+  performCompaction,
+} from "./context.js";
+import { buildSystemPrompt } from "./prompts.js";
+import { countStringTokens } from "./tokens.js";
 import { executeTool, toolSchemas } from "./tools/index.js";
+import type { AgentConfig, ContextBudget } from "./types.js";
 
-import type { AgentConfig } from "./types.js";
+const RESERVED_FOR_RESPONSE_TOKENS = 4096;
+const SAFETY_MARGIN_TOKENS = 2000;
+
+function buildBudget(config: AgentConfig): ContextBudget {
+  return {
+    windowSize: config.contextWindowSize,
+    systemPromptTokens: countStringTokens(buildSystemPrompt()),
+    toolSchemaTokens: countToolSchemaTokens(toolSchemas),
+    reservedForResponse: RESERVED_FOR_RESPONSE_TOKENS,
+    safetyMargin: SAFETY_MARGIN_TOKENS,
+  };
+}
 
 export async function runAgentLoop(
     client: OpenAI,
     messageHistory: ChatCompletionMessageParam[],
     config: AgentConfig,
 ): Promise<string> {
+    const budget = buildBudget(config);
     let iterations = 0;
     const warningThreshold = Math.floor(config.maxIterations * 0.80);
     while (true) {
@@ -31,6 +50,13 @@ export async function runAgentLoop(
                     `Wrap up your current task. Do not start new tool calls unless absolutely necessary.`,
             });
         }
+
+        // Context compaction: strip tool results, then summarize if needed
+        if (needsCompaction(getContextUsage(messageHistory, budget))) {
+            const result = await performCompaction(messageHistory, budget, client);
+            console.log(`[context compacted: ${formatCompactionResult(result)}]`);
+        }
+
         const message: ChatCompletionMessage = await processStreamWithRetries(client, messageHistory, config);
         messageHistory.push(message);
 
@@ -59,7 +85,7 @@ interface ToolCallAccumulator {
         name: string;
         arguments: string;
     };
-};
+}
 
 async function processStreamWithRetries(
     client: OpenAI,
@@ -106,7 +132,6 @@ async function processStream(
     const contentParts: string[] = [];
     const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
     const refusals: string[] = [];
-    let finishReason: string | undefined = undefined;
     for await (const chunk of responseStream) {
         const choice = chunk.choices[0]
         if (!choice) continue;
@@ -136,9 +161,7 @@ async function processStream(
             }
         }
 
-        if (choice.finish_reason) {
-            finishReason = choice.finish_reason;
-        }
+        if (choice.finish_reason) break;
     }
     if (contentParts.length > 0) process.stdout.write("\n");
     const fullContent = contentParts.join("") || null;
@@ -173,15 +196,17 @@ export async function runInteractiveMode(
     output: process.stdout,
   });
 
+  const budget = buildBudget(config);
+
   const commandsHelp =
     `Commands:\n` +
     `  /help        Show this help\n` +
     `  /exit        Quit\n` +
     `  /history     Show how many messages are in context\n` +
+    `  /context     Show context window usage breakdown\n` +
+    `  /compact     Force context compaction now\n` +
     `  /clear       Clear conversation history (keeps system prompt)\n` +
     `  /model       Show current model\n`;
-
-  const modelName = config.model;
 
   const printDivider = () => {
     const width = Math.max(32, Math.min(process.stdout.columns ?? 80, 120));
@@ -201,33 +226,41 @@ export async function runInteractiveMode(
     if (userInputRaw.startsWith("/")) {
       const cmd = userInputRaw.toLowerCase();
 
-      if (cmd === "/exit") {
-        rl.close();
-        break;
+      switch (cmd) {
+        case "/exit":
+          rl.close();
+          return;
+        case "/help":
+          console.log(commandsHelp);
+          break;
+        case "/history":
+          console.log(`History: ${messageHistory.length} messages in context.`);
+          break;
+        case "/clear":
+          messageHistory.splice(0, messageHistory.length);
+          console.log("History cleared.");
+          break;
+        case "/model":
+          console.log(`Model: ${config.model}`);
+          break;
+        case "/context": {
+          const usage = getContextUsage(messageHistory, budget);
+          console.log(`Context window: ${usage.used.toLocaleString()} / ${usage.available.toLocaleString()} tokens (${usage.percentage}%)`);
+          console.log(`  Messages: ${messageHistory.length}`);
+          console.log(`  System prompt: ${budget.systemPromptTokens.toLocaleString()} tokens`);
+          console.log(`  Tool schemas: ${budget.toolSchemaTokens.toLocaleString()} tokens`);
+          console.log(`  Reserved for response: ${budget.reservedForResponse.toLocaleString()} tokens`);
+          break;
+        }
+        case "/compact": {
+          const result = await performCompaction(messageHistory, budget, client);
+          console.log(`Compacted: ${formatCompactionResult(result)}`);
+          break;
+        }
+        default:
+          console.log(`Unknown command: ${userInputRaw}. Try /help.`);
+          break;
       }
-
-      if (cmd === "/help") {
-        console.log(commandsHelp);
-        continue;
-      }
-
-      if (cmd === "/history") {
-        console.log(`History: ${messageHistory.length} messages in context.`);
-        continue;
-      }
-
-      if (cmd === "/clear") {
-        messageHistory.splice(0, messageHistory.length);
-        console.log("History cleared.");
-        continue;
-      }
-
-      if (cmd === "/model") {
-        console.log(`Model: ${modelName}`);
-        continue;
-      }
-
-      console.log(`Unknown command: ${userInputRaw}. Try /help.`);
       continue;
     }
 
@@ -237,6 +270,8 @@ export async function runInteractiveMode(
     printDivider();
     process.stdout.write("Paul Code > ");
     await runAgentLoop(client, messageHistory, config);
+    const usage = getContextUsage(messageHistory, budget);
+    console.log(formatContextUsage(usage));
     printDivider();
   }
 }

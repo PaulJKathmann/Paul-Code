@@ -10,4 +10,19 @@ export interface AgentConfig {
     maxIterations: number;
     baseURL: string;
     apiKey: string;
+    contextWindowSize: number;
+}
+
+export interface ContextBudget {
+  windowSize: number;
+  systemPromptTokens: number;
+  toolSchemaTokens: number;
+  reservedForResponse: number;
+  safetyMargin: number;
+}
+
+export interface ContextUsage {
+  used: number;
+  available: number;
+  percentage: number;
 }

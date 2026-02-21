@@ -27,6 +27,3 @@ export function buildSystemPrompt(): string {
     "- Never guess or make assumptions about information you don't have. If you don't know, ask, say you don't know, or even better use a tool.",
   ].join("\n");
 }
-
-// Backwards-compatible export (optional). Prefer buildSystemPrompt().
-export const SYSTEM_PROMPT = buildSystemPrompt();

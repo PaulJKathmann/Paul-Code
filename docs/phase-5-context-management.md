@@ -206,14 +206,17 @@ The real insight: **tool results are the biggest context consumers, not conversa
 
 **This is the highest-value strategy** because it targets the biggest consumers without losing the conversation thread.
 
-### Recommended Approach
+### Recommended Approach: Two-Phase Compaction (Claude Code's Strategy)
 
-Combine Strategy 3 + Strategy 1:
+This is how Claude Code manages context, and it is the best approach for a production agent. It combines strategies in a deliberate order:
 
-1. **First pass:** Truncate old tool results (smart truncation)
-2. **If still over budget:** Drop oldest message pairs (truncation)
+1. **Phase 1 — Strip tool results first.** Tool outputs (file reads, command output, search results) are the biggest context consumers but the lowest-value content after the turn they were used in. Replace old tool results with short summaries or truncated head/tail excerpts. This alone often reclaims 50-70% of used tokens.
 
-This preserves the conversation flow as long as possible while aggressively compressing the bulkiest content.
+2. **Phase 2 — Summarize the conversation.** If stripping tool results still leaves you above 50% capacity, use the LLM to summarize the older portion of the conversation into a single condensed message. This preserves decisions, file paths, error states, and the current plan while shedding verbose intermediate reasoning.
+
+**Why not just drop messages?** Dropping oldest messages (Strategy 1) loses the user's original request and early decisions. Summarization preserves the *meaning* at the cost of one extra API call. The tradeoff is worth it for any non-trivial task.
+
+**Why 50% as the summarization trigger?** After stripping tool results, if you're still above 50%, the conversation itself is long. Summarizing early gives headroom for the next round of tool calls. Waiting until 90% means you might not have enough room for the summary response itself.
 
 ---
 
@@ -246,19 +249,21 @@ export function getContextUsage(
 
 ### The Compaction Algorithm
 
-This is the core of context management. It runs before every API call and returns a (possibly compacted) message array.
+This is the core of context management. It runs before every API call and returns a (possibly compacted) message array. It follows Claude Code's two-phase approach: strip tool results first, then summarize if still too full.
 
 ```typescript
 const TOOL_RESULT_TRUNCATION_LINES = 20; // keep first 10 + last 10 lines
 const RECENT_MESSAGES_TO_PROTECT = 10;   // never truncate the last N messages
+const SUMMARIZATION_THRESHOLD = 0.5;     // summarize if still above 50% after stripping
 
-export function compactMessages(
+export async function compactMessages(
   messages: any[],
-  availableTokens: number
-): any[] {
+  availableTokens: number,
+  client: OpenAI
+): Promise<any[]> {
   let compacted = [...messages]; // shallow copy
 
-  // Step 1: Truncate old tool results
+  // Phase 1: Strip old tool results
   compacted = truncateOldToolResults(compacted);
 
   // Check if that was enough
@@ -266,8 +271,11 @@ export function compactMessages(
     return compacted;
   }
 
-  // Step 2: Drop oldest message pairs until under budget
-  compacted = dropOldestMessages(compacted, availableTokens);
+  // Phase 2: If still above 50% capacity, summarize older conversation
+  const usageAfterStrip = countTokens(compacted) / availableTokens;
+  if (usageAfterStrip > SUMMARIZATION_THRESHOLD) {
+    compacted = await summarizeOlderMessages(compacted, client);
+  }
 
   return compacted;
 }
@@ -316,38 +324,79 @@ function truncateToolContent(content: string): string {
 }
 ```
 
-### Step 2: Drop Oldest Messages
+### Phase 2: Summarize Older Messages
+
+When stripping tool results isn't enough, use the model itself to compress the older portion of the conversation into a single summary message. This preserves meaning — decisions, file paths, errors, and the current plan — while shedding verbose intermediate turns.
 
 ```typescript
-function dropOldestMessages(messages: any[], availableTokens: number): any[] {
-  const result = [...messages];
+async function summarizeOlderMessages(
+  messages: any[],
+  client: OpenAI
+): Promise<any[]> {
+  // Split: older messages get summarized, recent messages stay verbatim
+  const splitIndex = Math.max(0, messages.length - RECENT_MESSAGES_TO_PROTECT);
+  const olderMessages = messages.slice(0, splitIndex);
+  const recentMessages = messages.slice(splitIndex);
 
-  // Drop from the front, but never drop below RECENT_MESSAGES_TO_PROTECT
-  while (
-    result.length > RECENT_MESSAGES_TO_PROTECT &&
-    countTokens(result) > availableTokens
-  ) {
-    // Drop the first message
-    const dropped = result.shift()!;
+  // Nothing old enough to summarize
+  if (olderMessages.length === 0) return messages;
 
-    // If we dropped an assistant message with tool_calls, also drop
-    // the corresponding tool result messages
-    if (dropped.role === "assistant" && dropped.tool_calls) {
-      const toolCallIds = new Set(dropped.tool_calls.map((tc: any) => tc.id));
-      // Remove tool results that belong to the dropped assistant message
-      for (let i = result.length - 1; i >= 0; i--) {
-        if (result[i].role === "tool" && toolCallIds.has(result[i].tool_call_id)) {
-          result.splice(i, 1);
-        }
+  // Build a text representation of the older conversation for the summarizer
+  const conversationText = olderMessages
+    .map((msg) => {
+      if (msg.role === "tool") {
+        return `[tool result for ${msg.tool_call_id}: ${msg.content?.slice(0, 200)}...]`;
       }
-    }
-  }
+      if (msg.role === "assistant" && msg.tool_calls) {
+        const calls = msg.tool_calls
+          .map((tc: any) => `${tc.function.name}(${tc.function.arguments.slice(0, 100)}...)`)
+          .join(", ");
+        return `assistant: [called tools: ${calls}]${msg.content ? `\n${msg.content}` : ""}`;
+      }
+      return `${msg.role}: ${msg.content ?? ""}`;
+    })
+    .join("\n\n");
 
-  return result;
+  // Ask the model to summarize
+  const summaryResponse = await client.chat.completions.create({
+    model: "gpt-4o-mini", // use a cheap/fast model for summarization
+    messages: [
+      {
+        role: "system",
+        content:
+          "Summarize the following conversation history. Preserve ALL of the following:\n" +
+          "- The user's original request and goal\n" +
+          "- Exact file paths that were read or modified\n" +
+          "- Key decisions made and their rationale\n" +
+          "- Errors encountered and how they were resolved\n" +
+          "- The current state of the task (what's done, what's remaining)\n" +
+          "Be concise but do not lose critical details. Use bullet points.",
+      },
+      { role: "user", content: conversationText },
+    ],
+    max_tokens: 1024,
+  });
+
+  const summary = summaryResponse.choices[0]?.message?.content ?? "Summary unavailable.";
+
+  // Replace older messages with the summary
+  return [
+    {
+      role: "user",
+      content:
+        `[Conversation summary — earlier messages were compacted to save context]\n\n${summary}`,
+    },
+    ...recentMessages,
+  ];
 }
 ```
 
-**Why drop tool results with their assistant message:** The API requires that every `tool_call_id` in a tool result message has a matching tool call in an earlier assistant message. If you drop the assistant message but keep the tool result, the API returns an error.
+**Key design decisions:**
+
+- **Use a cheap model for summarization.** `gpt-4o-mini` is fast and cheap. You don't need your primary model for this — it's a compression task, not a reasoning task.
+- **Cap the summary at 1024 tokens.** This guarantees you reclaim significant space. If the older conversation was 60K tokens, replacing it with a 1K summary is a 98% reduction.
+- **Preserve the summary as a `user` message.** This avoids issues with orphaned `tool_call_id` references. A clean user message with context is all the model needs.
+- **Never summarize recent messages.** The last N turns stay verbatim so the model has full fidelity on what it just did.
 
 ### Integration with the Agent Loop
 
@@ -367,15 +416,19 @@ const budget: ContextBudget = {
 const available = getAvailableTokens(budget);
 const usage = getContextUsage(messageHistory, budget);
 
-// Compact if over 90% capacity
-if (usage.percentage > 90) {
-  const before = messageHistory.length;
-  messageHistory = compactMessages(messageHistory, available);
-  const after = messageHistory.length;
-  if (after < before) {
+// Compact if over 80% capacity
+// Phase 1 (strip tool results) always runs.
+// Phase 2 (summarize) only runs if still above 50% after stripping.
+if (usage.percentage > 80) {
+  const beforeTokens = usage.used;
+  const beforeCount = messageHistory.length;
+  messageHistory = await compactMessages(messageHistory, available, client);
+  const afterTokens = countTokens(messageHistory);
+  const afterCount = messageHistory.length;
+  if (afterTokens < beforeTokens) {
     console.log(
-      `[context compacted: ${before} -> ${after} messages, ` +
-      `${usage.used.toLocaleString()} -> ${countTokens(messageHistory).toLocaleString()} tokens]`
+      `[context compacted: ${beforeCount} -> ${afterCount} messages, ` +
+      `${beforeTokens.toLocaleString()} -> ${afterTokens.toLocaleString()} tokens]`
     );
   }
 }
@@ -470,6 +523,7 @@ This is informational, not alarming. The agent continues working normally -- it 
 Here is the complete `src/context.ts` file:
 
 ```typescript
+import OpenAI from "openai";
 import { countTokens, countStringTokens } from "./tokens";
 
 export interface ContextBudget {
@@ -488,6 +542,7 @@ export interface ContextUsage {
 
 const TOOL_RESULT_TRUNCATION_LINES = 20;
 const RECENT_MESSAGES_TO_PROTECT = 10;
+const SUMMARIZATION_THRESHOLD = 0.5;
 
 export function getAvailableTokens(budget: ContextBudget): number {
   return (
@@ -513,19 +568,33 @@ export function getContextUsage(messages: any[], budget: ContextBudget): Context
   };
 }
 
-export function compactMessages(messages: any[], availableTokens: number): any[] {
+export async function compactMessages(
+  messages: any[],
+  availableTokens: number,
+  client: OpenAI
+): Promise<any[]> {
+  // Phase 1: Strip old tool results
   let compacted = truncateOldToolResults([...messages]);
   if (countTokens(compacted) <= availableTokens) return compacted;
-  return dropOldestMessages(compacted, availableTokens);
+
+  // Phase 2: Summarize if still above 50% capacity
+  const usageAfterStrip = countTokens(compacted) / availableTokens;
+  if (usageAfterStrip > SUMMARIZATION_THRESHOLD) {
+    compacted = 
+    await summarizeOlderMessages(compacted, client);
+  }
+  return compacted;
 }
 
 export function formatContextUsage(usage: ContextUsage): string {
   const used = usage.used.toLocaleString();
   const avail = usage.available.toLocaleString();
-  if (usage.percentage >= 90) return `[tokens: ${used} / ${avail} -- context nearly full, older messages will be dropped]`;
+  if (usage.percentage >= 90) return `[tokens: ${used} / ${avail} -- context nearly full, compaction imminent]`;
   if (usage.percentage >= 75) return `[tokens: ${used} / ${avail} -- context 75%+ full]`;
   return `[tokens: ${used} / ${avail}]`;
 }
+
+// --- Phase 1: Strip old tool results ---
 
 function truncateOldToolResults(messages: any[]): any[] {
   const result = [];
@@ -554,20 +623,58 @@ function truncateToolContent(content: string): string {
   );
 }
 
-function dropOldestMessages(messages: any[], availableTokens: number): any[] {
-  const result = [...messages];
-  while (result.length > RECENT_MESSAGES_TO_PROTECT && countTokens(result) > availableTokens) {
-    const dropped = result.shift()!;
-    if (dropped.role === "assistant" && dropped.tool_calls) {
-      const ids = new Set(dropped.tool_calls.map((tc: any) => tc.id));
-      for (let i = result.length - 1; i >= 0; i--) {
-        if (result[i].role === "tool" && ids.has(result[i].tool_call_id)) {
-          result.splice(i, 1);
-        }
+// --- Phase 2: Summarize older conversation ---
+
+async function summarizeOlderMessages(messages: any[], client: OpenAI): Promise<any[]> {
+  const splitIndex = Math.max(0, messages.length - RECENT_MESSAGES_TO_PROTECT);
+  const olderMessages = messages.slice(0, splitIndex);
+  const recentMessages = messages.slice(splitIndex);
+
+  if (olderMessages.length === 0) return messages;
+
+  const conversationText = olderMessages
+    .map((msg) => {
+      if (msg.role === "tool") {
+        return `[tool result for ${msg.tool_call_id}: ${msg.content?.slice(0, 200)}...]`;
       }
-    }
-  }
-  return result;
+      if (msg.role === "assistant" && msg.tool_calls) {
+        const calls = msg.tool_calls
+          .map((tc: any) => `${tc.function.name}(${tc.function.arguments.slice(0, 100)}...)`)
+          .join(", ");
+        return `assistant: [called tools: ${calls}]${msg.content ? `\n${msg.content}` : ""}`;
+      }
+      return `${msg.role}: ${msg.content ?? ""}`;
+    })
+    .join("\n\n");
+
+  const summaryResponse = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content:
+          "Summarize the following conversation history. Preserve ALL of the following:\n" +
+          "- The user's original request and goal\n" +
+          "- Exact file paths that were read or modified\n" +
+          "- Key decisions made and their rationale\n" +
+          "- Errors encountered and how they were resolved\n" +
+          "- The current state of the task (what's done, what's remaining)\n" +
+          "Be concise but do not lose critical details. Use bullet points.",
+      },
+      { role: "user", content: conversationText },
+    ],
+    max_tokens: 1024,
+  });
+
+  const summary = summaryResponse.choices[0]?.message?.content ?? "Summary unavailable.";
+
+  return [
+    {
+      role: "user",
+      content: `[Conversation summary — earlier messages were compacted to save context]\n\n${summary}`,
+    },
+    ...recentMessages,
+  ];
 }
 ```
 
@@ -579,10 +686,14 @@ function dropOldestMessages(messages: any[], availableTokens: number): any[] {
 |-----------|-------------|
 | `tokens.ts` | Counts tokens for strings and message arrays using `gpt-tokenizer` |
 | `ContextBudget` | Calculates available tokens after subtracting fixed costs |
-| Smart truncation | Compresses old tool results (file contents, command output) to first/last N lines |
-| Message dropping | Drops oldest message pairs when truncation is not enough |
+| Phase 1: Strip tool results | Truncates old tool outputs to first/last N lines — targets the biggest context consumers first |
+| Phase 2: Summarize | Uses a cheap model to compress older conversation into a bullet-point summary, preserving decisions and file paths |
 | Usage display | Shows `[tokens: X / Y]` after every response, warns at 75% and 90% |
 
-The key insight: **tool results are the real context hogs, not conversation.** A 500-line file read is 2,000+ tokens. The model's reasoning about that file is 50-100 tokens. Smart truncation targets the right thing.
+**The two key insights:**
 
-After this phase, your agent can handle long sessions without hitting context limits. The user sees exactly how much runway they have, and compaction happens automatically with minimal information loss.
+1. **Tool results are the real context hogs.** A 500-line file read is 2,000+ tokens. The model's reasoning about that file is 50-100 tokens. Stripping tool results first targets the biggest consumers with zero information loss to the conversation thread.
+
+2. **Summarization beats truncation.** Dropping oldest messages loses the user's original request and early decisions. Summarization preserves the *meaning* — what was decided, what files were touched, what errors occurred — at the cost of one cheap API call. This is how Claude Code maintains coherence across long sessions.
+
+After this phase, your agent can handle long sessions without hitting context limits. The user sees exactly how much runway they have, and compaction happens automatically — first cheaply (stripping tool outputs), then intelligently (summarizing) — with minimal information loss.

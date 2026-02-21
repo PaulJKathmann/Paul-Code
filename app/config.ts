@@ -2,11 +2,19 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { AgentConfig } from "./types.js";
 
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-5.2": 200_000,
+    "o3-mini": 200_000,
+};
+
 const DEFAULT_CONFIG: AgentConfig = {
     model: "gpt-5.2",
     maxIterations: 5,
     baseURL: "https://api.openai.com/v1",
     apiKey: "",
+    contextWindowSize: 200_000,
 };
 
 function loadProjectConfig(): Partial<AgentConfig> {
@@ -61,6 +69,12 @@ export function loadConfig(): AgentConfig {
     throw new Error(
       "No API key found. Set OPENAI_API_KEY environment variable."
     );
+  }
+
+  // Auto-detect context window from model name if not explicitly set
+  if (!projectConfig.contextWindowSize && !cliConfig.contextWindowSize) {
+    merged.contextWindowSize =
+      MODEL_CONTEXT_WINDOWS[merged.model] ?? DEFAULT_CONFIG.contextWindowSize;
   }
 
   return merged;

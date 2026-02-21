@@ -1,9 +1,8 @@
 import OpenAI from "openai";
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions/completions.mjs';
-import { runAgentLoop, runInteractiveMode } from "./agent.ts";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions/completions.mjs";
 import { parseArgs } from "node:util";
+import { runAgentLoop, runInteractiveMode } from "./agent.ts";
 import { loadConfig } from "./config.ts";
-type MessageHistoryItem = ChatCompletionMessageParam;
 
 process.on("SIGINT", () => {
   console.log("\nInterrupted. Goodbye.");

@@ -5,7 +5,7 @@ import type {
 } from "openai/resources/chat/completions/completions.js";
 import type { ChatCompletionMessageToolCall } from "openai/resources/chat/completions/completions.mjs";
 import * as readline from "readline/promises";
-import { red, yellow } from "./colors.js";
+import { cyan, dim, red, yellow } from "./colors.js";
 import {
   countToolSchemaTokens,
   formatCompactionResult,
@@ -243,8 +243,61 @@ export async function runInteractiveMode(
   messageHistory: ChatCompletionMessageParam[],
   config: AgentConfig,
 ): Promise<void> {
-  console.log("Paul Code — interactive mode");
-  console.log("/help for commands. Ctrl+C or /exit to quit.\n");
+  const TIPS = [
+    "Run /help to see available commands",
+    "Use /context to check token usage",
+    "Use /compact to free up context space",
+    "Use /clear to start a fresh conversation",
+  ];
+  const tip = TIPS[Math.floor(Math.random() * TIPS.length)];
+  const cwd = process.cwd().replace(process.env.HOME ?? "", "~");
+  const cols = Math.max(60, Math.min(process.stdout.columns ?? 80, 100));
+
+  // Build the welcome box
+  const midCol = 35; // left panel width
+  const rightCol = cols - midCol - 3; // right panel width (minus borders + divider)
+
+  const pad = (s: string, w: number) => {
+    const visible = s.replace(/\x1b\[[0-9;]*m/g, "").length;
+    return s + " ".repeat(Math.max(0, w - visible));
+  };
+
+  const leftLines = [
+    "",
+    "       Welcome back!",
+    "",
+    "",
+    `         ${cyan("{")}${yellow("o,o")}${cyan("}")}`,
+    `         ${cyan("/)  )")}`,
+    `        ${cyan('-"-"-')}`,
+    `   ${dim(config.model)}`,
+    `   ${dim(cwd)}`,
+  ];
+
+  const rightLines = [
+    dim("Tips"),
+    `${tip}`,
+    dim("─".repeat(rightCol)),
+    dim("Commands"),
+    `${dim("/help")} overview  ${dim("/context")} usage`,
+    `${dim("/compact")} free space  ${dim("/clear")} reset`,
+    "",
+    "",
+    "",
+  ];
+
+  const topBorder = dim(`╭─── ${cyan("Paul Code")} ${"─".repeat(Math.max(0, cols - 16))}╮`);
+  const botBorder = dim(`╰${"─".repeat(cols - 2)}╯`);
+
+  const rows = Math.max(leftLines.length, rightLines.length);
+  const bodyLines: string[] = [];
+  for (let i = 0; i < rows; i++) {
+    const l = pad(leftLines[i] ?? "", midCol);
+    const r = pad(rightLines[i] ?? "", rightCol);
+    bodyLines.push(`${dim("│")} ${l}${dim("│")} ${r}${dim("│")}`);
+  }
+
+  console.log([topBorder, ...bodyLines, botBorder].join("\n"));
 
   const rl = readline.createInterface({
     input: process.stdin,

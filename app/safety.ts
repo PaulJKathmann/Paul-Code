@@ -1,5 +1,5 @@
 import * as readline from "readline";
-import { dim, yellow } from "./colors.js";
+import { dim, yellow } from "./theme.js";
 
 export type RiskLevel = "safe" | "moderate" | "dangerous";
 

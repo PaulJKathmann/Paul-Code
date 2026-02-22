@@ -1,7 +1,12 @@
+// app/display.ts
+
 import { createTwoFilesPatch } from "diff";
-import { bold, cyan, dim, green, red } from "./colors.js";
+import { bold, cyan, dim, green, red, slate } from "./theme.js";
+import { renderToolBlock, renderConnector, type ToolBlockOptions } from "./blocks.js";
 
 const MAX_DISPLAY_LINES = 20;
+
+// ── Diff Display ─────────────────────────────────────────
 
 export function formatDiff(filePath: string, oldContent: string, newContent: string): string {
   const patch = createTwoFilesPatch(
@@ -25,6 +30,30 @@ export function formatDiff(filePath: string, oldContent: string, newContent: str
     })
     .join("\n");
 }
+
+// ── Tool Display (New: Bordered Blocks) ──────────────────
+
+export function displayToolExecution(
+  toolName: string,
+  args: Record<string, unknown>,
+  result: string,
+  elapsed: number,
+  isError: boolean,
+): string {
+  const summary = summarizeArgs(toolName, args);
+  const lineCount = result.split("\n").length;
+
+  return renderToolBlock({
+    toolName,
+    args: summary,
+    content: result,
+    elapsed,
+    lineCount,
+    isError,
+  });
+}
+
+// ── Legacy Functions (kept for backward compat) ──────────
 
 export function formatToolHeader(toolName: string, args: Record<string, unknown>): string {
   const summary = summarizeArgs(toolName, args);
@@ -52,7 +81,19 @@ export function formatToolOutput(result: string): string {
   return `${dim(shown)}\n${dim(`[... ${hidden} more lines]`)}`;
 }
 
-function summarizeArgs(toolName: string, args: Record<string, unknown>): string {
+// ── Agent Output Gutter ──────────────────────────────────
+
+/** Wrap text with a subtle dim left gutter to distinguish agent output. */
+export function withGutter(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => slate("│ ") + line)
+    .join("\n");
+}
+
+// ── Helpers ──────────────────────────────────────────────
+
+export function summarizeArgs(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {
     case "read_file":
     case "write_file":

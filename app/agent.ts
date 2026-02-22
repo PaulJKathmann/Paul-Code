@@ -5,7 +5,7 @@ import type {
 } from "openai/resources/chat/completions/completions.js";
 import type { ChatCompletionMessageToolCall } from "openai/resources/chat/completions/completions.mjs";
 import * as readline from "readline/promises";
-import { red, yellow } from "./colors.js";
+import { red, yellow, dim } from "./theme.js";
 import {
   countToolSchemaTokens,
   formatCompactionResult,
@@ -14,13 +14,15 @@ import {
   needsCompaction,
   performCompaction,
 } from "./context.js";
-import { formatToolHeader, formatToolOutput, formatToolResult } from "./display.js";
+import { displayToolExecution, summarizeArgs } from "./display.js";
 import { buildSystemPrompt } from "./prompts.js";
 import { classifyRisk, confirmDangerous } from "./safety.js";
 import { startSpinner, stopSpinner } from "./spinner.js";
 import { countStringTokens } from "./tokens.js";
 import { executeTool, toolSchemas } from "./tools/index.js";
 import type { AgentConfig, ContextBudget } from "./types.js";
+import { setOwlState, stopOwl, OWL_PROMPT } from "./owl.js";
+import { renderConnector, renderSessionSummary } from "./blocks.js";
 
 const RESERVED_FOR_RESPONSE_TOKENS = 4096;
 const SAFETY_MARGIN_TOKENS = 2000;
@@ -42,6 +44,9 @@ export async function runAgentLoop(
 ): Promise<string> {
   const budget = buildBudget(config);
   let iterations = 0;
+  let totalToolsUsed = 0;
+  let totalFilesChanged = 0;
+  const loopStartTime = performance.now();
   const warningThreshold = Math.floor(config.maxIterations * 0.8);
 
   while (true) {
@@ -71,6 +76,27 @@ export async function runAgentLoop(
 
     const toolCalls: ChatCompletionMessageToolCall[] = message.tool_calls ?? [];
     if (toolCalls.length === 0) {
+      // Show session summary if we used multiple tools
+      stopOwl();
+      if (totalToolsUsed >= 2) {
+        const totalElapsed = performance.now() - loopStartTime;
+        const tokenCount = getContextUsage(messageHistory, budget).used;
+        setOwlState("happy");
+        // Let happy animation play briefly
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        stopOwl();
+        console.log("");
+        console.log(
+          renderSessionSummary({
+            toolsUsed: totalToolsUsed,
+            elapsed: totalElapsed,
+            filesChanged: totalFilesChanged,
+            tokens: tokenCount,
+          }),
+        );
+      } else {
+        setOwlState("idle");
+      }
       return message.content ?? "";
     }
 
@@ -99,20 +125,35 @@ export async function runAgentLoop(
         }
       }
 
-      // Execute with timing and formatted display
-      console.log(formatToolHeader(toolName, parsedArgs));
+      // Execute with timing and bordered display
+      setOwlState("working");
+
+      if (totalToolsUsed > 0) {
+        console.log(renderConnector());
+      }
 
       const start = performance.now();
       let result: string;
+      let isError = false;
       try {
         result = await executeTool(toolName, parsedArgs);
       } catch (err) {
         result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        isError = true;
       }
       const elapsed = performance.now() - start;
 
-      console.log(formatToolOutput(result));
-      console.log(formatToolResult(toolName, elapsed, result));
+      console.log(displayToolExecution(toolName, parsedArgs, result, elapsed, isError));
+
+      // Track stats
+      totalToolsUsed++;
+      if (["write_file", "edit_file"].includes(toolName) && !isError) {
+        totalFilesChanged++;
+      }
+
+      if (isError) {
+        setOwlState("concerned");
+      }
 
       messageHistory.push({
         role: "tool",
@@ -163,6 +204,7 @@ async function processStream(
   messageHistory: ChatCompletionMessageParam[],
   config: AgentConfig,
 ): Promise<ChatCompletionMessage> {
+  setOwlState("thinking");
   startSpinner("Thinking");
 
   const responseStream = await client.chat.completions.create({
@@ -183,6 +225,7 @@ async function processStream(
 
     if (firstChunk) {
       stopSpinner();
+      stopOwl();
       firstChunk = false;
     }
 
@@ -213,6 +256,7 @@ async function processStream(
   }
 
   stopSpinner(); // Safety: clear spinner if stream was empty
+  stopOwl();
 
   if (contentParts.length > 0) process.stdout.write("\n");
 
@@ -243,8 +287,7 @@ export async function runInteractiveMode(
   messageHistory: ChatCompletionMessageParam[],
   config: AgentConfig,
 ): Promise<void> {
-  console.log("Paul Code — interactive mode");
-  console.log("/help for commands. Ctrl+C or /exit to quit.\n");
+  // Banner is shown by main.ts, so we skip the old text header
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -274,7 +317,7 @@ export async function runInteractiveMode(
   });
 
   while (true) {
-    const userInputRaw = (await rl.question("\nYou > ")).trim();
+    const userInputRaw = (await rl.question(`\n${OWL_PROMPT}`)).trim();
     if (!userInputRaw) continue;
 
     if (userInputRaw.startsWith("/")) {
@@ -324,8 +367,7 @@ export async function runInteractiveMode(
 
     messageHistory.push({ role: "user", content: userInputRaw });
 
-    printDivider();
-    process.stdout.write("Paul Code > ");
+    console.log("");
     await runAgentLoop(client, messageHistory, config);
     const usage = getContextUsage(messageHistory, budget);
     console.log(formatContextUsage(usage));

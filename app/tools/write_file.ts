@@ -1,5 +1,5 @@
 import fs from "fs";
-import { green } from "../colors.js";
+import { green } from "../theme.js";
 import { formatDiff } from "../display.js";
 import type { ToolDefinition } from "../types.js";
 

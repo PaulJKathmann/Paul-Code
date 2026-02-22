@@ -1,14 +1,29 @@
 import fs from "fs";
-import type { ToolDefinition } from "../types";
+import { green } from "../colors.js";
+import { formatDiff } from "../display.js";
+import type { ToolDefinition } from "../types.js";
 
-export function writeToFile(file_path: string, content: string): boolean {
+export function writeToFile(file_path: string, content: string): string {
+  let oldContent = "";
   try {
-    fs.writeFileSync(file_path, content, "utf8");
-    return true;
-  } catch (err) {
-    console.error(`Error writing file: ${err}`);
-    return false;
+    oldContent = fs.readFileSync(file_path, "utf-8");
+  } catch {
+    // New file — no old content to diff
   }
+
+  try {
+    fs.writeFileSync(file_path, content, "utf-8");
+  } catch (err) {
+    return `Error writing file: ${err}`;
+  }
+
+  if (oldContent) {
+    console.log(formatDiff(file_path, oldContent, content));
+  } else {
+    console.log(green(`+ Created new file: ${file_path} (${content.split("\n").length} lines)`));
+  }
+
+  return `Successfully wrote ${file_path}`;
 }
 
 export const write_file: ToolDefinition = {
@@ -31,7 +46,6 @@ export const write_file: ToolDefinition = {
   execute: (args: Record<string, unknown>) => {
     const file_path = args.file_path as string;
     const content = args.content as string;
-    const success = writeToFile(file_path, content);
-    return success ? "File written successfully" : "Error writing file";
+    return writeToFile(file_path, content);
   },
 };

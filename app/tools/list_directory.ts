@@ -2,7 +2,16 @@ import { readdirSync } from "fs";
 import type { ToolDefinition } from "../types";
 
 export function listDirectory(path: string = "."): string {
-  const entries = readdirSync(path, { withFileTypes: true });
+  let entries;
+  try {
+    entries = readdirSync(path, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return `Error: directory not found: ${path}`;
+    }
+    return `Error reading directory: ${(err as Error).message}`;
+  }
+
   const dirs: string[] = [];
   const files: string[] = [];
 

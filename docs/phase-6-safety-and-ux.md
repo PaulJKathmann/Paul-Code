@@ -8,7 +8,7 @@ The agent works, but it does not feel like a real tool. Bash commands run withou
 
 ---
 
-## 6.1 Dangerous Operation Classification
+## 6.1 Dangerous Operation Classification ✅
 
 ### What and Why
 
@@ -135,7 +135,7 @@ Safe operations like `read_file` and `grep_search` execute immediately with no p
 
 ---
 
-## 6.2 Colored Output
+## 6.2 Colored Output ✅
 
 ### What and Why
 
@@ -211,7 +211,7 @@ When `NO_COLOR=1` is set, all `wrap()` calls return the text unchanged. When out
 
 ---
 
-## 6.3 Diff Display for File Changes
+## 6.3 Diff Display for File Changes ✅
 
 ### What and Why
 
@@ -315,7 +315,7 @@ Additions in green, deletions in red, context in dim, hunk headers in cyan. The 
 
 ---
 
-## 6.4 Spinner / Progress Indicator
+## 6.4 Spinner / Progress Indicator ✅
 
 ### What and Why
 
@@ -402,7 +402,7 @@ This is optional. Short tool calls (read_file, edit_file) complete in millisecon
 
 ---
 
-## 6.5 Tool Execution Display
+## 6.5 Tool Execution Display ✅
 
 ### What and Why
 

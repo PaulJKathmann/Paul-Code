@@ -1,10 +1,11 @@
-import { readFileSync, writeFileSync } from "fs";
-import type { ToolDefinition } from "../types";
+import fs from "fs";
+import { formatDiff } from "../display.js";
+import type { ToolDefinition } from "../types.js";
 
 export function editFile(file_path: string, old_string: string, new_string: string): string {
   let content: string;
   try {
-    content = readFileSync(file_path, "utf-8");
+    content = fs.readFileSync(file_path, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return `Error: file not found: ${file_path}`;
@@ -12,13 +13,12 @@ export function editFile(file_path: string, old_string: string, new_string: stri
     throw err;
   }
 
-  // Count occurrences
-  let count = 0,
-    position = 0;
+  let count = 0;
+  let position = 0;
   while ((position = content.indexOf(old_string, position)) !== -1) {
     count++;
     position += 1;
-    if (count > 1) break; // No need to count beyond 2nd occurrence
+    if (count > 1) break;
   }
 
   if (count === 0) {
@@ -29,7 +29,10 @@ export function editFile(file_path: string, old_string: string, new_string: stri
   }
 
   const newContent = content.replace(old_string, new_string);
-  writeFileSync(file_path, newContent, "utf-8");
+  fs.writeFileSync(file_path, newContent, "utf-8");
+
+  console.log(formatDiff(file_path, content, newContent));
+
   return `Successfully edited ${file_path}`;
 }
 
